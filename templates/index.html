@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>China Cultural Heritage System</title>
+    <!-- 引入 ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * {margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif;}
+        .container {width:100vw; height:100vh; display:flex; flex-direction:column;}
+        .search-bar {padding:12px; background:#f5f5f5; display:flex; gap:10px; flex-wrap:wrap; align-items:center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 10;}
+        select, input, button {padding:8px 10px; font-size:14px; border:1px solid #ccc; border-radius:4px; outline: none;}
+        
+        .action-btn {cursor:pointer; background:#007bff; color:white; border:none; padding: 9px 15px;}
+        .action-btn:hover {background:#0056b3;}
+        
+        /* 语言切换组样式 */
+        .lang-switch {margin-left: auto; display: flex; background: #e0e0e0; border-radius: 20px; padding: 3px;}
+        .lang-switch button {
+            background: transparent; color: #333; border: none; padding: 6px 16px;
+            border-radius: 18px; font-weight: bold; font-size: 13px; cursor: pointer; transition: 0.3s;
+        }
+        .lang-switch button.active {background: #007bff; color: white;}
+        
+        #map {flex:1; width:100%;}
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="search-bar">
+        <select id="dynastySel"></select>
+        <select id="typeSel"></select>
+        <input type="text" id="keyword" placeholder="输入遗产名称搜索">
+        <button class="action-btn" onclick="doSearch()" id="btnSearch">查询</button>
+        <button class="action-btn" onclick="resetAll()" id="btnReset">重置</button>
+        
+        <div class="lang-switch">
+            <button id="btn-en" onclick="changeLanguage('en')">EN</button>
+            <button id="btn-ru" onclick="changeLanguage('ru')">RU</button>
+            <button id="btn-zh" class="active" onclick="changeLanguage('zh')">中文</button>
+        </div>
+    </div>
+    <div id="map"></div>
+</div>
+
+<script>
+    const baseUrl = "http://127.0.0.1:5000";
+    let myChart = null;
+    let currentLang = 'zh';
+
+    // 多语言字典
+    const i18n = {
+        zh: {
+            allDynasty: "全部朝代", allType: "全部类型", placeholder: "输入遗产名称搜索",
+            search: "查询", reset: "重置", type: "类型", dynasty: "朝代", address: "地址", intro: "简介",
+            types: {"古遗址":"古遗址", "古建筑":"古建筑", "古墓葬":"古墓葬", "石窟寺":"石窟寺", "文物保护遗迹":"文物保护遗迹"},
+            dynasties: {"新石器时代":"新石器时代", "夏":"夏", "商":"商", "周":"周", "春秋":"春秋", "战国":"战国", "秦":"秦", "汉":"汉", "三国":"三国", "晋":"晋", "南北朝":"南北朝", "隋":"隋", "唐":"唐", "五代":"五代", "宋":"宋", "元":"元", "明":"明", "清":"清"}
+        },
+        en: {
+            allDynasty: "All Dynasties", allType: "All Types", placeholder: "Search Heritage Name",
+            search: "Search", reset: "Reset", type: "Type", dynasty: "Dynasty", address: "Address", intro: "Introduction",
+            types: {"古遗址":"Ancient Ruins", "古建筑":"Ancient Architecture", "古墓葬":"Ancient Tombs", "石窟寺":"Cave Temples", "文物保护遗迹":"Cultural Relics"},
+            dynasties: {"新石器时代":"Neolithic", "夏":"Xia", "商":"Shang", "周":"Zhou", "春秋":"Spring and Autumn", "战国":"Warring States", "秦":"Qin", "汉":"Han", "三国":"Three Kingdoms", "晋":"Jin", "南北朝":"Northern and Southern Dynasties", "隋":"Sui", "唐":"Tang", "五代":"Five Dynasties", "宋":"Song", "元":"Yuan", "明":"Ming", "清":"Qing"}
+        },
+        ru: {
+            allDynasty: "Все династии", allType: "Все типы", placeholder: "Поиск по названию",
+            search: "Поиск", reset: "Сброс", type: "Тип", dynasty: "Династия", address: "Адрес", intro: "Описание",
+            types: {"古遗址":"Древние руины", "古建筑":"Древняя архитектура", "古墓葬":"Древние гробницы", "石窟寺":"Пещерные храмы", "文物保护遗迹":"Памятники культуры"},
+            dynasties: {"新石器时代":"Неолит", "夏":"Ся", "商":"Шан", "周":"Чжоу", "春秋":"Весна и Осень", "战国":"Сражающиеся царства", "秦":"Цинь", "汉":"Хань", "三国":"Троецарствие", "晋":"Цзинь", "南北朝":"Южные и Северные династии", "隋":"Суй", "唐":"Тан", "五代":"Пять династий", "宋":"Сун", "元":"Юань", "明":"Мин", "清":"Цин"}
+        }
+    };
+
+    // 初始化 ECharts 和加载数据
+    window.onload = async function() {
+        myChart = echarts.init(document.getElementById('map'));
+        myChart.showLoading(); // 显示加载动画
+
+        // 获取中国地图数据 (阿里云免费源，不需要API Key)
+        fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json')
+            .then(response => response.json())
+            .then(geoJson => {
+                echarts.registerMap('china', geoJson); // 注册地图
+                updateUILanguage();
+                loadMeta();
+                loadData(); // 初始加载数据
+            }).catch(err => {
+                console.error("地图加载失败", err);
+                alert("地图加载失败，请检查网络");
+            });
+    };
+
+    // 切换语言
+    function changeLanguage(lang) {
+        currentLang = lang;
+        document.getElementById('btn-zh').classList.remove('active');
+        document.getElementById('btn-en').classList.remove('active');
+        document.getElementById('btn-ru').classList.remove('active');
+        document.getElementById('btn-' + lang).classList.add('active');
+
+        updateUILanguage();
+        loadMeta(); 
+        doSearch(); // 重新渲染地图和弹窗
+    }
+
+    function updateUILanguage() {
+        const dict = i18n[currentLang];
+        document.getElementById("keyword").placeholder = dict.placeholder;
+        document.getElementById("btnSearch").innerText = dict.search;
+        document.getElementById("btnReset").innerText = dict.reset;
+    }
+
+    // 加载下拉框数据
+    async function loadMeta() {
+        const res = await fetch(`${baseUrl}/api/meta`);
+        const meta = await res.json();
+        
+        const dySel = document.getElementById("dynastySel");
+        const tpSel = document.getElementById("typeSel");
+        const dict = i18n[currentLang];
+        
+        const curDy = dySel.value;
+        const curTp = tpSel.value;
+
+        dySel.innerHTML = `<option value="">${dict.allDynasty}</option>`;
+        tpSel.innerHTML = `<option value="">${dict.allType}</option>`;
+
+        meta.dynasties.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d;
+            opt.innerHTML = dict.dynasties[d] || d;
+            dySel.appendChild(opt);
+        });
+
+        meta.heritage_types.forEach(t => {
+            const opt = document.createElement("option");
+            opt.value = t;
+            opt.innerHTML = dict.types[t] || t;
+            tpSel.appendChild(opt);
+        });
+
+        if(curDy) dySel.value = curDy;
+        if(curTp) tpSel.value = curTp;
+    }
+
+    // 核心渲染函数
+    function renderData(list) {
+        myChart.hideLoading();
+        const dict = i18n[currentLang];
+        
+        // 将后端数据转换为 ECharts 需要的格式
+        const scatterData = list.map(item => {
+            return {
+                name: item.heritage_name,
+                value: [Number(item.longitude), Number(item.latitude), item], // 前两个是经纬度，第三个是完整数据
+                itemStyle: { color: '#007bff' } // 蓝色点
+            };
+        });
+
+        const option = {
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                borderColor: '#ccc',
+                textStyle: { color: '#333' },
+                formatter: function (params) {
+                    if (params.seriesType === 'scatter') {
+                        const item = params.value[2];
+                        const translatedType = dict.types[item.heritage_type] || item.heritage_type;
+                        const translatedDy = dict.dynasties[item.dynasty] || item.dynasty;
+                        return `<div style="width:240px; padding:5px;">
+                                    <h4 style="margin-bottom:8px;">${item.heritage_name}</h4>
+                                    <p style="margin:4px 0;"><b>${dict.type}:</b> ${translatedType}</p>
+                                    <p style="margin:4px 0;"><b>${dict.dynasty}:</b> ${translatedDy}</p>
+                                    <p style="margin:4px 0;"><b>${dict.address}:</b> ${item.address}</p>
+                                    <p style="margin:4px 0;"><b>${dict.intro}:</b> ${item.introduction}</p>
+                                </div>`;
+                    }
+                }
+            },
+            geo: {
+                map: 'china',
+                roam: true, // 允许鼠标缩放和拖拽
+                zoom: 1.2,
+                label: { show: false },
+                itemStyle: {
+                    areaColor: '#f3f3f3', // 省份底色
+                    borderColor: '#999',  // 边界线颜色
+                    borderWidth: 0.5
+                },
+                emphasis: {
+                    itemStyle: { areaColor: '#ffd700' }, // 鼠标悬浮省份时的高亮色
+                    label: { show: true, color: '#333' } // 悬浮显示省份名称
+                }
+            },
+            series: [
+                {
+                    name: 'Heritage',
+                    type: 'scatter',
+                    coordinateSystem: 'geo', // 使用地理坐标系
+                    data: scatterData,
+                    symbolSize: 6, // 点的大小
+                    itemStyle: {
+                        color: '#0044cc',
+                        shadowBlur: 5,
+                        shadowColor: 'rgba(0, 0, 0, 0.5)'
+                    }
+                }
+            ]
+        };
+
+        myChart.setOption(option, true); // true 表示不合并，重新渲染
+    }
+
+    async function loadData() {
+        const resp = await fetch(`${baseUrl}/api/all`);
+        const data = await resp.json();
+        renderData(data);
+    }
+
+    async function doSearch() {
+        const dy = document.getElementById("dynastySel").value;
+        const tp = document.getElementById("typeSel").value;
+        const kw = document.getElementById("keyword").value.trim();
+        const url = new URL(`${baseUrl}/api/search`);
+        
+        if (dy) url.searchParams.append("dynasty", dy);
+        if (tp) url.searchParams.append("heritage_type", tp);
+        if (kw) url.searchParams.append("keyword", kw);
+        
+        const res = await fetch(url);
+        const list = await res.json();
+        renderData(list);
+    }
+
+    function resetAll() {
+        document.getElementById("dynastySel").value = "";
+        document.getElementById("typeSel").value = "";
+        document.getElementById("keyword").value = "";
+        loadData();
+    }
+    
+    // 窗口大小改变时，图表自适应
+    window.addEventListener('resize', function() {
+        if(myChart) myChart.resize();
+    });
+</script>
+</body>
+</html>
